@@ -1,9 +1,7 @@
 // Elementos del DOM
 document.addEventListener('DOMContentLoaded', () => {
-    // Verificar estado de autenticación al cargar cualquier página
     checkUserState();
     
-    // Manejar navegación móvil
     const menuToggle = document.getElementById('menuToggle');
     const navLinks = document.getElementById('navLinks');
     
@@ -13,35 +11,29 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Detectar si estamos en página de login
     if (window.location.pathname.includes('login.html')) {
         initAuthForms();
     }
 
-    // Detectar si estamos en dashboard
     if (window.location.pathname.includes('dashboard.html')) {
         loadDashboardData();
     }
 
-    // Actualizar contador de miembros
     updateMemberCount();
 });
 
 // Verificar estado del usuario
 function checkUserState() {
-    auth.onAuthStateChanged((user) => {
+    auth.onAuthStateChanged(async (user) => {
         const currentPath = window.location.pathname;
         
-        // Actualizar UI de la página principal
         updateMainPageUI(user);
         
         if (user) {
-            // Usuario logueado
             if (currentPath.includes('login.html')) {
                 window.location.href = 'dashboard.html';
             }
             
-            // Guardar datos del usuario
             const userData = {
                 uid: user.uid,
                 name: user.displayName || 'Usuario',
@@ -50,25 +42,36 @@ function checkUserState() {
             };
             localStorage.setItem('user', JSON.stringify(userData));
             
-            // Actualizar último login en Firestore
-            db.collection('users').doc(user.uid).update({
-                lastLogin: firebase.firestore.FieldValue.serverTimestamp(),
-                online: true
-            }).catch(() => {
-                // Si el documento no existe, lo creamos
-                db.collection('users').doc(user.uid).set({
-                    name: user.displayName || 'Usuario',
-                    email: user.email,
-                    avatar: userData.avatar,
-                    lastLogin: firebase.firestore.FieldValue.serverTimestamp(),
-                    online: true,
-                    role: 'miembro',
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                });
-            });
+            // VERIFICAR Y ACTUALIZAR USUARIO EN FIRESTORE
+            try {
+                const userRef = db.collection('users').doc(user.uid);
+                const userDoc = await userRef.get();
+                
+                if (!userDoc.exists) {
+                    // Si es nuevo, crear documento
+                    await userRef.set({
+                        name: user.displayName || 'Usuario',
+                        email: user.email,
+                        avatar: userData.avatar,
+                        role: 'miembro', // CAMBIADO de 'fundador' a 'miembro'
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        lastLogin: firebase.firestore.FieldValue.serverTimestamp(),
+                        online: true,
+                        isActive: true
+                    });
+                } else {
+                    // Si ya existe, actualizar último login y online
+                    await userRef.update({
+                        lastLogin: firebase.firestore.FieldValue.serverTimestamp(),
+                        online: true,
+                        isActive: true
+                    });
+                }
+            } catch (error) {
+                console.error("Error actualizando usuario:", error);
+            }
             
         } else {
-            // Usuario no logueado
             if (currentPath.includes('dashboard.html')) {
                 window.location.href = 'login.html';
             }
@@ -192,14 +195,16 @@ function initAuthForms() {
                     displayName: name
                 });
 
+                // GUARDAR CORRECTAMENTE EN FIRESTORE
                 await db.collection('users').doc(userCredential.user.uid).set({
                     name: name,
                     email: email,
                     createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                     lastLogin: firebase.firestore.FieldValue.serverTimestamp(),
                     avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=6c5ce7&color=fff`,
-                    role: 'miembro',
-                    online: true
+                    role: 'miembro', // CAMBIADO a 'miembro' en lugar de 'fundador'
+                    online: true,
+                    isActive: true
                 });
 
                 showNotification('¡Registro exitoso!', 'success');
@@ -218,7 +223,31 @@ function initAuthForms() {
             try {
                 showLoading(gmailBtn);
                 const provider = new firebase.auth.GoogleAuthProvider();
-                await auth.signInWithPopup(provider);
+                const result = await auth.signInWithPopup(provider);
+                
+                // Guardar usuario de Google en Firestore
+                const user = result.user;
+                const userRef = db.collection('users').doc(user.uid);
+                const userDoc = await userRef.get();
+                
+                if (!userDoc.exists) {
+                    await userRef.set({
+                        name: user.displayName,
+                        email: user.email,
+                        avatar: user.photoURL,
+                        role: 'miembro',
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        lastLogin: firebase.firestore.FieldValue.serverTimestamp(),
+                        online: true,
+                        isActive: true
+                    });
+                } else {
+                    await userRef.update({
+                        lastLogin: firebase.firestore.FieldValue.serverTimestamp(),
+                        online: true
+                    });
+                }
+                
                 showNotification('¡Bienvenido!', 'success');
             } catch (error) {
                 handleAuthError(error);
@@ -235,7 +264,31 @@ function initAuthForms() {
             try {
                 showLoading(facebookBtn);
                 const provider = new firebase.auth.FacebookAuthProvider();
-                await auth.signInWithPopup(provider);
+                const result = await auth.signInWithPopup(provider);
+                
+                // Guardar usuario de Facebook en Firestore
+                const user = result.user;
+                const userRef = db.collection('users').doc(user.uid);
+                const userDoc = await userRef.get();
+                
+                if (!userDoc.exists) {
+                    await userRef.set({
+                        name: user.displayName,
+                        email: user.email,
+                        avatar: user.photoURL,
+                        role: 'miembro',
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        lastLogin: firebase.firestore.FieldValue.serverTimestamp(),
+                        online: true,
+                        isActive: true
+                    });
+                } else {
+                    await userRef.update({
+                        lastLogin: firebase.firestore.FieldValue.serverTimestamp(),
+                        online: true
+                    });
+                }
+                
                 showNotification('¡Bienvenido!', 'success');
             } catch (error) {
                 handleAuthError(error);
@@ -284,6 +337,13 @@ async function loadDashboardData() {
     if (logoutBtn) {
         logoutBtn.addEventListener('click', async () => {
             try {
+                // Marcar como offline antes de salir
+                if (user) {
+                    await db.collection('users').doc(user.uid).update({
+                        online: false,
+                        lastLogout: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                }
                 await auth.signOut();
                 localStorage.removeItem('user');
                 window.location.href = 'index.html';
@@ -295,13 +355,10 @@ async function loadDashboardData() {
     }
 
     try {
-        // Cargar todas las funcionalidades
         await loadDashboardStats();
         await loadUpcomingEvents();
         await loadMembersPreview();
         await loadRecentActivity();
-        
-        // Configurar navegación
         setupSidebarNavigation();
         
     } catch (error) {
@@ -309,60 +366,118 @@ async function loadDashboardData() {
     }
 }
 
-// ===== FUNCIONES CORREGIDAS (SIN DATOS DE EJEMPLO) =====
+// ===== FUNCIONES CORREGIDAS CON DATOS REALES =====
 
 // Cargar estadísticas del dashboard
 async function loadDashboardStats() {
     try {
-        const user = JSON.parse(localStorage.getItem('user'));
-        
         // Contar miembros totales REALES
         const membersSnapshot = await db.collection('users').get();
         const totalMembers = membersSnapshot.size;
+        
+        // Contar miembros activos (online = true)
+        const activeSnapshot = await db.collection('users')
+            .where('online', '==', true)
+            .get();
+        const activeMembers = activeSnapshot.size;
+        
+        // Contar miembros con isActive = true (como respaldo)
+        const activeSnapshot2 = await db.collection('users')
+            .where('isActive', '==', true)
+            .get();
+        
+        // Usar el que tenga más sentido
+        const finalActiveCount = activeMembers > 0 ? activeMembers : activeSnapshot2.size;
         
         // Actualizar elementos
         const totalMembersEl = document.getElementById('totalMembers');
         if (totalMembersEl) totalMembersEl.textContent = totalMembers;
         
-        // Contar miembros activos (online ahora)
-        const activeSnapshot = await db.collection('users')
-            .where('online', '==', true)
-            .get();
-        
         const activeMembersEl = document.getElementById('activeMembers');
         if (activeMembersEl) {
-            if (totalMembers === 1) {
-                activeMembersEl.textContent = "1 (tú)";
-            } else {
-                activeMembersEl.textContent = activeSnapshot.size;
-            }
+            activeMembersEl.textContent = finalActiveCount;
         }
         
-        // Eventos (0 por ahora)
+        // Eventos (por ahora 0)
         const upcomingEventsEl = document.getElementById('upcomingEvents');
         if (upcomingEventsEl) upcomingEventsEl.textContent = "0";
         
-        // Mensajes (0 por ahora)
+        // Mensajes no leídos (por ahora 0)
         const unreadMessagesEl = document.getElementById('unreadMessages');
         if (unreadMessagesEl) unreadMessagesEl.textContent = "0";
         
+        console.log(`Estadísticas: ${totalMembers} totales, ${finalActiveCount} activos`);
+        
     } catch (error) {
         console.error('Error cargando estadísticas:', error);
-        // Mostrar solo el usuario actual
-        document.getElementById('totalMembers').textContent = "1";
-        document.getElementById('activeMembers').textContent = "1 (tú)";
-        document.getElementById('upcomingEvents').textContent = "0";
-        document.getElementById('unreadMessages').textContent = "0";
     }
 }
 
-// Cargar actividad reciente REAL
+// Cargar miembros REALES
+async function loadMembersPreview() {
+    const membersPreview = document.getElementById('membersPreview');
+    if (!membersPreview) return;
+    
+    try {
+        const currentUser = JSON.parse(localStorage.getItem('user'));
+        
+        // Obtener TODOS los usuarios REALES de Firestore
+        const membersSnapshot = await db.collection('users')
+            .orderBy('lastLogin', 'desc')
+            .get();
+        
+        if (membersSnapshot.size > 0) {
+            let html = '';
+            membersSnapshot.forEach(doc => {
+                const data = doc.data();
+                const isCurrentUser = doc.id === currentUser.uid;
+                html += `
+                    <div class="member-item">
+                        <img src="${data.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(data.name)}&background=6c5ce7&color=fff`}" 
+                             alt="${data.name}" class="member-avatar">
+                        <div class="member-info">
+                            <h4>${data.name} ${isCurrentUser ? '(tú)' : ''}</h4>
+                            <span class="member-role">${data.role || 'Miembro'}</span>
+                        </div>
+                        <span class="member-status ${data.online ? 'online' : 'offline'}" 
+                              title="${data.online ? 'En línea' : 'Desconectado'}"></span>
+                    </div>
+                `;
+            });
+            membersPreview.innerHTML = html;
+            
+            console.log(`Mostrando ${membersSnapshot.size} miembros`);
+            
+        } else {
+            // Esto no debería pasar porque al menos está el usuario actual
+            membersPreview.innerHTML = `
+                <div class="member-item">
+                    <img src="${currentUser.avatar}" alt="${currentUser.name}" class="member-avatar">
+                    <div class="member-info">
+                        <h4>${currentUser.name} (tú)</h4>
+                        <span class="member-role">Miembro</span>
+                    </div>
+                    <span class="member-status online"></span>
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('Error cargando miembros:', error);
+    }
+}
+
+// Cargar actividad reciente
 async function loadRecentActivity() {
     const feedContainer = document.getElementById('activityFeed');
     if (!feedContainer) return;
     
     try {
+        // Buscar actividades de los últimos 7 días
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+        
         const activitiesSnapshot = await db.collection('activities')
+            .where('timestamp', '>', sevenDaysAgo)
             .orderBy('timestamp', 'desc')
             .limit(10)
             .get();
@@ -387,41 +502,34 @@ async function loadRecentActivity() {
             });
             feedContainer.innerHTML = html;
         } else {
-            // Mensaje amigable cuando no hay actividades
+            // Crear actividad de bienvenida
             const user = JSON.parse(localStorage.getItem('user'));
+            
+            // Guardar actividad de bienvenida en Firestore
+            await db.collection('activities').add({
+                userName: user.name,
+                userAvatar: user.avatar,
+                action: 'se unió a la comunidad',
+                timestamp: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            
             feedContainer.innerHTML = `
                 <div class="feed-item welcome-message">
                     <img src="${user.avatar}" alt="${user.name}" class="activity-avatar">
                     <div class="feed-content">
-                        <h4>¡Bienvenido a la comunidad!</h4>
-                        <p>Comparte el link con amigos para que más personas se unan</p>
-                        <button class="btn-share" onclick="shareCommunity()">
-                            <i class="fas fa-share-alt"></i> Invitar amigos
-                        </button>
+                        <h4>${user.name}</h4>
+                        <p>se unió a la comunidad</p>
+                        <span class="feed-time">Justo ahora</span>
                     </div>
                 </div>
             `;
         }
     } catch (error) {
         console.error('Error cargando actividades:', error);
-        feedContainer.innerHTML = `
-            <div class="feed-item">
-                <div class="feed-content">
-                    <p>Bienvenido a la comunidad. ¡Comparte y conoce gente nueva!</p>
-                </div>
-            </div>
-        `;
     }
 }
 
-// Función para compartir la comunidad
-function shareCommunity() {
-    const url = window.location.origin;
-    navigator.clipboard.writeText(url);
-    showNotification('¡Link copiado! Compártelo con amigos', 'success');
-}
-
-// Cargar próximos eventos (vacíos por ahora)
+// Cargar próximos eventos
 async function loadUpcomingEvents() {
     const eventsList = document.getElementById('eventsList');
     if (!eventsList) return;
@@ -439,7 +547,7 @@ async function loadUpcomingEvents() {
             eventsSnapshot.forEach(doc => {
                 const data = doc.data();
                 html += `
-                    <div class="event-item" onclick="window.location.href='#event-${doc.id}'">
+                    <div class="event-item">
                         <div class="event-date">
                             <span class="event-day">${new Date(data.date).getDate()}</span>
                             <span class="event-month">${new Date(data.date).toLocaleString('es', { month: 'short' })}</span>
@@ -451,102 +559,25 @@ async function loadUpcomingEvents() {
                         </div>
                         <div class="event-attendees">
                             <i class="fas fa-users"></i>
-                            <span>${data.attendees?.length || 0}</span>
+                            <span>${data.attendees || 0}</span>
                         </div>
                     </div>
                 `;
             });
             eventsList.innerHTML = html;
         } else {
-            // Mensaje para crear primer evento
             eventsList.innerHTML = `
-                <div class="event-item create-event" onclick="showNotification('Pronto podrás crear eventos', 'info')">
-                    <div class="event-info">
-                        <h4>📅 No hay eventos programados</h4>
-                        <p>¡Sé el primero en organizar un evento!</p>
+                <div class="event-item" onclick="showNotification('Pronto podrás crear eventos', 'info')">
+                    <div class="event-info" style="text-align: center; width: 100%;">
+                        <i class="fas fa-calendar-plus" style="font-size: 2rem; color: var(--primary); margin-bottom: 0.5rem;"></i>
+                        <h4>No hay eventos programados</h4>
+                        <p>Próximamente podrás crear eventos</p>
                     </div>
-                    <i class="fas fa-plus-circle" style="color: var(--primary); font-size: 2rem;"></i>
                 </div>
             `;
         }
     } catch (error) {
         console.error('Error cargando eventos:', error);
-        eventsList.innerHTML = `
-            <div class="event-item">
-                <div class="event-info">
-                    <p>Próximamente podrás crear eventos</p>
-                </div>
-            </div>
-        `;
-    }
-}
-
-// Cargar miembros REALES
-async function loadMembersPreview() {
-    const membersPreview = document.getElementById('membersPreview');
-    if (!membersPreview) return;
-    
-    try {
-        const currentUser = JSON.parse(localStorage.getItem('user'));
-        
-        // Obtener SOLO usuarios REALES de Firestore
-        const membersSnapshot = await db.collection('users')
-            .orderBy('lastLogin', 'desc')
-            .limit(6)
-            .get();
-        
-        if (membersSnapshot.size > 1) { // Hay más miembros además del actual
-            let html = '';
-            membersSnapshot.forEach(doc => {
-                const data = doc.data();
-                const isCurrentUser = doc.id === currentUser.uid;
-                html += `
-                    <div class="member-item" onclick="window.location.href='#profile-${doc.id}'">
-                        <img src="${data.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(data.name)}&background=6c5ce7&color=fff`}" 
-                             alt="${data.name}" class="member-avatar">
-                        <div class="member-info">
-                            <h4>${data.name} ${isCurrentUser ? '(tú)' : ''}</h4>
-                            <span class="member-role">${data.role || 'Miembro'}</span>
-                        </div>
-                        <span class="member-status ${data.online ? 'online' : 'offline'}"></span>
-                    </div>
-                `;
-            });
-            membersPreview.innerHTML = html;
-        } else {
-            // Solo mostrar el usuario actual
-            membersPreview.innerHTML = `
-                <div class="member-item">
-                    <img src="${currentUser.avatar}" alt="${currentUser.name}" class="member-avatar">
-                    <div class="member-info">
-                        <h4>${currentUser.name} (tú)</h4>
-                        <span class="member-role">Fundador</span>
-                    </div>
-                    <span class="member-status online"></span>
-                </div>
-                <div class="member-item invite-card" onclick="shareCommunity()">
-                    <div class="member-info">
-                        <i class="fas fa-user-plus" style="color: var(--primary); font-size: 2rem; margin-bottom: 0.5rem;"></i>
-                        <h4>Invitar amigos</h4>
-                        <p>Comparte la comunidad</p>
-                    </div>
-                </div>
-            `;
-        }
-    } catch (error) {
-        console.error('Error cargando miembros:', error);
-        // Mostrar solo el usuario actual
-        const currentUser = JSON.parse(localStorage.getItem('user'));
-        membersPreview.innerHTML = `
-            <div class="member-item">
-                <img src="${currentUser.avatar}" alt="${currentUser.name}" class="member-avatar">
-                <div class="member-info">
-                    <h4>${currentUser.name} (tú)</h4>
-                    <span class="member-role">Fundador</span>
-                </div>
-                <span class="member-status online"></span>
-            </div>
-        `;
     }
 }
 
@@ -563,11 +594,10 @@ function setupSidebarNavigation() {
             
             const section = this.querySelector('span').textContent;
             
-            // Acciones según la sección
             switch(section) {
                 case 'Miembros':
                     loadMembersPreview();
-                    showNotification('Sección de miembros', 'info');
+                    showNotification('Lista de miembros', 'info');
                     break;
                 case 'Eventos':
                     loadUpcomingEvents();
@@ -583,7 +613,6 @@ function setupSidebarNavigation() {
                     showNotification('Configuración próximamente', 'info');
                     break;
                 default:
-                    // Inicio - recargar
                     location.reload();
             }
         });
@@ -594,18 +623,22 @@ function setupSidebarNavigation() {
 function formatTime(timestamp) {
     if (!timestamp) return 'Recientemente';
     
-    const date = timestamp.toDate();
-    const now = new Date();
-    const diff = now - date;
-    
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(minutes / 60);
-    const days = Math.floor(hours / 24);
-    
-    if (days > 0) return `Hace ${days} día${days > 1 ? 's' : ''}`;
-    if (hours > 0) return `Hace ${hours} hora${hours > 1 ? 's' : ''}`;
-    if (minutes > 0) return `Hace ${minutes} minuto${minutes > 1 ? 's' : ''}`;
-    return 'Justo ahora';
+    try {
+        const date = timestamp.toDate();
+        const now = new Date();
+        const diff = now - date;
+        
+        const minutes = Math.floor(diff / 60000);
+        const hours = Math.floor(minutes / 60);
+        const days = Math.floor(hours / 24);
+        
+        if (days > 0) return `Hace ${days} día${days > 1 ? 's' : ''}`;
+        if (hours > 0) return `Hace ${hours} hora${hours > 1 ? 's' : ''}`;
+        if (minutes > 0) return `Hace ${minutes} minuto${minutes > 1 ? 's' : ''}`;
+        return 'Justo ahora';
+    } catch (error) {
+        return 'Recientemente';
+    }
 }
 
 // Actualizar contador de miembros
@@ -714,7 +747,7 @@ function handleAuthError(error) {
     showNotification(message, 'error');
 }
 
-// Agregar estilos adicionales
+// Estilos adicionales
 const style = document.createElement('style');
 style.textContent = `
     @keyframes slideIn {
@@ -757,53 +790,23 @@ style.textContent = `
         box-shadow: 0 5px 15px rgba(108, 92, 231, 0.3);
     }
 
-    .welcome-message {
-        background: linear-gradient(135deg, rgba(108, 92, 231, 0.1), rgba(0, 206, 201, 0.1));
-        border: 1px solid var(--primary);
+    .member-status.online {
+        background: #00b894;
+        box-shadow: 0 0 10px #00b894;
+        animation: pulse 2s infinite;
     }
 
-    .btn-share {
-        background: var(--primary);
-        color: white;
-        border: none;
-        padding: 0.5rem 1rem;
-        border-radius: 20px;
-        margin-top: 0.5rem;
-        cursor: pointer;
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-        transition: all 0.3s ease;
+    .member-status.offline {
+        background: #b2bec3;
     }
 
-    .btn-share:hover {
-        background: var(--primary-dark);
-        transform: scale(1.05);
-    }
-
-    .invite-card {
-        background: linear-gradient(135deg, var(--primary), var(--secondary));
-        cursor: pointer;
-        text-align: center;
-        justify-content: center;
-    }
-
-    .invite-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 10px 20px rgba(108, 92, 231, 0.3);
-    }
-
-    .create-event {
-        cursor: pointer;
-        border: 2px dashed var(--primary);
-    }
-
-    .create-event:hover {
-        background: rgba(108, 92, 231, 0.1);
-    }
-
-    .text-center {
-        text-align: center;
+    @keyframes pulse {
+        0%, 100% {
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.5;
+        }
     }
 `;
 document.head.appendChild(style);
